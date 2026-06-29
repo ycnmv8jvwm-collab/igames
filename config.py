@@ -51,3 +51,4 @@ ZONES = {
     "pc":  "💻 Общий зал",
     "vip": "🎮 VIP-место",
     "ps5": "🕹 PlayStation",
+}
