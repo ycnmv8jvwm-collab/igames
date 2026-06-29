@@ -13,7 +13,7 @@ from config import (
 )
 from keyboards import (
     main_menu, phone_keyboard, zones_keyboard,
-    seats_keyboard, cancel_booking_kb, confirm_kb, back_kb,
+    seats_keyboard, cancel_booking_kb, confirm_kb,
 )
 from states import RegisterSG, BookingSG
 
