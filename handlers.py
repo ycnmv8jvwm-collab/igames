@@ -1,5 +1,5 @@
-import re
-from datetime import datetime, timedelta
+import sqlite3
+from datetime import datetime
 
 from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command
@@ -9,22 +9,18 @@ from aiogram.types import Message, CallbackQuery, Contact
 import database as db
 from config import (
     ADMIN_ID, CLUB_NAME, CLUB_ADDRESS, CLUB_HOURS,
-    CLUB_PHONE, PRICE_LIST, ZONES, TOTAL_SEATS,
+    CLUB_PHONE, PRICE_LIST, ZONES,
 )
 from keyboards import (
-    main_menu, phone_keyboard, zones_keyboard,
-    seats_keyboard, cancel_booking_kb, confirm_kb,
+    main_menu, phone_keyboard, zones_keyboard, dates_keyboard,
+    times_keyboard, seats_keyboard, skip_comment_kb,
+    confirm_booking_kb, cancel_booking_kb, confirm_kb,
 )
 from states import RegisterSG, BookingSG
 
 main_router = Router()
-
 db.init_db()
 
-
-# ─────────────────────────────────────────────────────
-#  УТИЛИТЫ
-# ─────────────────────────────────────────────────────
 
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
@@ -45,114 +41,95 @@ def fmt_booking(b) -> str:
     )
 
 
-# ─────────────────────────────────────────────────────
-#  /start
-# ─────────────────────────────────────────────────────
+# ── /start ──────────────────────────────────────────
 
 @main_router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     user = message.from_user
     db.upsert_user(user.id, user.username or "", user.full_name)
-
     existing = db.get_user(user.id)
     admin = is_admin(user.id)
 
     if existing and existing["phone"]:
         await message.answer(
             f"👋 Привет, {user.first_name}! Добро пожаловать в <b>{CLUB_NAME}</b>.",
-            reply_markup=main_menu(admin),
-            parse_mode="HTML",
+            reply_markup=main_menu(admin), parse_mode="HTML",
         )
     else:
         await message.answer(
             f"👋 Привет! Я бот компьютерного клуба <b>{CLUB_NAME}</b>.\n\n"
-            "Для продолжения поделись своим номером телефона 👇",
-            reply_markup=phone_keyboard(),
-            parse_mode="HTML",
+            "Поделись своим номером телефона для регистрации 👇",
+            reply_markup=phone_keyboard(), parse_mode="HTML",
         )
         await state.set_state(RegisterSG.phone)
 
 
-# ─────────────────────────────────────────────────────
-#  РЕГИСТРАЦИЯ
-# ─────────────────────────────────────────────────────
+# ── Регистрация ──────────────────────────────────────
 
 @main_router.message(RegisterSG.phone, F.contact)
 async def reg_phone(message: Message, state: FSMContext):
     contact: Contact = message.contact
     if contact.user_id != message.from_user.id:
-        await message.answer("Пожалуйста, поделитесь своим номером, а не чужим.")
+        await message.answer("Пожалуйста, поделитесь своим номером.")
         return
-
     db.save_phone(message.from_user.id, contact.phone_number)
     await state.clear()
     await message.answer(
-        "✅ Номер сохранён! Теперь вы можете пользоваться ботом.",
+        "✅ Готово! Теперь вы можете пользоваться ботом.",
         reply_markup=main_menu(is_admin(message.from_user.id)),
     )
 
 
 @main_router.message(RegisterSG.phone)
 async def reg_phone_text(message: Message):
-    await message.answer("Пожалуйста, нажмите кнопку «Поделиться номером» ниже.")
+    await message.answer("Нажмите кнопку «Поделиться номером» ниже.")
 
 
-# ─────────────────────────────────────────────────────
-#  ИНФОРМАЦИЯ
-# ─────────────────────────────────────────────────────
+# ── Информация ───────────────────────────────────────
 
 @main_router.message(F.text == "ℹ️ О клубе")
 async def about(message: Message):
     await message.answer(
-        f"🏢 <b>{CLUB_NAME}</b>\n\n"
-        f"📍 {CLUB_ADDRESS}\n"
-        f"🕐 {CLUB_HOURS}\n"
-        f"📞 {CLUB_PHONE}",
+        f"🏢 <b>{CLUB_NAME}</b>\n\n📍 {CLUB_ADDRESS}\n🕐 {CLUB_HOURS}\n📞 {CLUB_PHONE}",
         parse_mode="HTML",
     )
 
 
 @main_router.message(F.text == "💰 Прайс")
 async def price(message: Message):
-    await message.answer(f"💰 <b>Прайс-лист {CLUB_NAME}</b>\n{PRICE_LIST}", parse_mode="HTML")
+    await message.answer(
+        f"💰 <b>Тарифы {CLUB_NAME}</b>\n{PRICE_LIST}",
+        parse_mode="Markdown",
+    )
 
-
-# ─────────────────────────────────────────────────────
-#  ПРОФИЛЬ
-# ─────────────────────────────────────────────────────
 
 @main_router.message(F.text == "👤 Профиль")
 async def profile(message: Message):
     u = db.get_user(message.from_user.id)
     bookings = db.get_user_bookings(message.from_user.id)
     active = [b for b in bookings if b["status"] in ("pending", "confirmed")]
-    phone = u["phone"] if u and u["phone"] else "не указан"
     await message.answer(
-        f"👤 <b>Ваш профиль</b>\n\n"
-        f"Имя: {message.from_user.full_name}\n"
-        f"Телефон: {phone}\n"
+        f"👤 <b>Ваш профиль</b>\n\nИмя: {message.from_user.full_name}\n"
+        f"Телефон: {u['phone'] if u and u['phone'] else 'не указан'}\n"
         f"Активных броней: {len(active)}",
         parse_mode="HTML",
     )
 
 
-# ─────────────────────────────────────────────────────
-#  МОИ БРОНИ
-# ─────────────────────────────────────────────────────
+# ── Мои брони ────────────────────────────────────────
 
 @main_router.message(F.text == "🗂 Мои брони")
 async def my_bookings(message: Message):
     rows = db.get_user_bookings(message.from_user.id)
-    if not rows:
-        await message.answer("У вас ещё нет броней.")
+    active = [b for b in rows if b["status"] != "cancelled"]
+    if not active:
+        await message.answer("У вас ещё нет активных броней.")
         return
-
-    for b in rows:
-        if b["status"] != "cancelled":
-            await message.answer(
-                fmt_booking(b),
-                reply_markup=cancel_booking_kb(b["id"]) if b["status"] in ("pending", "confirmed") else None,
-            )
+    for b in active:
+        await message.answer(
+            fmt_booking(b),
+            reply_markup=cancel_booking_kb(b["id"]) if b["status"] in ("pending", "confirmed") else None,
+        )
 
 
 @main_router.callback_query(F.data.startswith("cancel:"))
@@ -163,97 +140,90 @@ async def user_cancel(call: CallbackQuery):
     await call.answer("Бронь отменена.")
 
 
-# ─────────────────────────────────────────────────────
-#  БРОНИРОВАНИЕ — FSM
-# ─────────────────────────────────────────────────────
+# ── БРОНИРОВАНИЕ ─────────────────────────────────────
 
 @main_router.message(F.text == "📅 Забронировать")
 async def book_start(message: Message, state: FSMContext):
     u = db.get_user(message.from_user.id)
     if not u or not u["phone"]:
-        await message.answer("Сначала зарегистрируйтесь: введите /start")
+        await message.answer("Сначала зарегистрируйтесь: /start")
         return
     await state.set_state(BookingSG.zone)
     await message.answer("Выберите зону:", reply_markup=zones_keyboard())
 
 
+# Шаг 1 — зона
 @main_router.callback_query(BookingSG.zone, F.data.startswith("zone:"))
 async def book_zone(call: CallbackQuery, state: FSMContext):
     zone = call.data.split(":")[1]
     await state.update_data(zone=zone)
     await state.set_state(BookingSG.date)
-
-    today = datetime.now()
-    dates = [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
-    dates_str = "\n".join(f"• {d}" for d in dates)
     await call.message.edit_text(
-        f"Выбрана зона: <b>{zone_label(zone)}</b>\n\n"
-        f"Введите дату бронирования в формате <b>ГГГГ-ММ-ДД</b>\n\n"
-        f"Доступные даты:\n{dates_str}",
-        parse_mode="HTML",
+        f"Зона: <b>{zone_label(zone)}</b>\n\nВыберите дату:",
+        reply_markup=dates_keyboard(), parse_mode="HTML",
     )
     await call.answer()
 
 
-@main_router.callback_query(F.data == "cancel_booking")
-async def cancel_flow(call: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await call.message.edit_text("Бронирование отменено.")
-    await call.answer()
-
-
-@main_router.message(BookingSG.date)
-async def book_date(message: Message, state: FSMContext):
-    date_str = message.text.strip()
-    try:
-        date = datetime.strptime(date_str, "%Y-%m-%d")
-        if date.date() < datetime.now().date():
-            raise ValueError
-    except ValueError:
-        await message.answer("❌ Неверный формат или прошедшая дата. Введите дату в формате ГГГГ-ММ-ДД.")
-        return
-
+# Шаг 2 — дата
+@main_router.callback_query(BookingSG.date, F.data.startswith("date:"))
+async def book_date(call: CallbackQuery, state: FSMContext):
+    date_str = call.data.split(":")[1]
     await state.update_data(date=date_str)
     await state.set_state(BookingSG.time_from)
-    await message.answer("Введите время начала в формате <b>ЧЧ:ММ</b> (например, 14:00):", parse_mode="HTML")
+    d = datetime.strptime(date_str, "%Y-%m-%d")
+    await call.message.edit_text(
+        f"Дата: <b>{d.strftime('%d.%m.%Y')}</b>\n\nВыберите время начала:",
+        reply_markup=times_keyboard("tfrom", date_str), parse_mode="HTML",
+    )
+    await call.answer()
 
 
-@main_router.message(BookingSG.time_from)
-async def book_time_from(message: Message, state: FSMContext):
-    t = message.text.strip()
-    if not re.match(r"^\d{2}:\d{2}$", t):
-        await message.answer("❌ Формат: ЧЧ:ММ")
-        return
-    await state.update_data(time_from=t)
-    await state.set_state(BookingSG.time_to)
-    await message.answer("Введите время окончания (например, 16:00):")
-
-
-@main_router.message(BookingSG.time_to)
-async def book_time_to(message: Message, state: FSMContext):
-    t = message.text.strip()
-    if not re.match(r"^\d{2}:\d{2}$", t):
-        await message.answer("❌ Формат: ЧЧ:ММ")
-        return
-
+# Шаг 3 — время начала
+@main_router.callback_query(BookingSG.time_from, F.data.startswith("tfrom:"))
+async def book_time_from(call: CallbackQuery, state: FSMContext):
+    time_from = call.data.split(":")[1]
     data = await state.get_data()
-    if t <= data["time_from"]:
-        await message.answer("❌ Время окончания должно быть позже начала.")
+    await state.update_data(time_from=time_from)
+    await state.set_state(BookingSG.time_to)
+    await call.message.edit_text(
+        f"Начало: <b>{time_from}</b>\n\nВыберите время окончания:",
+        reply_markup=times_keyboard("tto", data.get("date", "")), parse_mode="HTML",
+    )
+    await call.answer()
+
+
+# Шаг 4 — время окончания
+@main_router.callback_query(BookingSG.time_to, F.data.startswith("tto:"))
+async def book_time_to(call: CallbackQuery, state: FSMContext):
+    time_to = call.data.split(":")[1]
+    data = await state.get_data()
+    time_from = data["time_from"]
+
+    # Проверка что время окончания позже начала (с учётом перехода через полночь)
+    def to_min(t):
+        h, m = map(int, t.split(":"))
+        return h * 60 + m + (1440 if h < 8 else 0)
+
+    if to_min(time_to) <= to_min(time_from):
+        await call.answer("Время окончания должно быть позже начала!", show_alert=True)
         return
 
-    await state.update_data(time_to=t)
+    await state.update_data(time_to=time_to)
     await state.set_state(BookingSG.seat)
 
-    booked = db.get_booked_seats(data["zone"], data["date"], data["time_from"], t)
-    await message.answer(
-        f"🟢 — свободно  🔴 — занято\n\nВыберите место (1–{TOTAL_SEATS}):",
-        reply_markup=seats_keyboard(data["zone"], booked),
+    booked = db.get_booked_seats(data["zone"], data["date"], time_from, time_to)
+    await call.message.edit_text(
+        f"🕐 <b>{time_from} – {time_to}</b>\n\n🟢 свободно  🔴 занято\n\nВыберите место:",
+        reply_markup=seats_keyboard(data["zone"], booked), parse_mode="HTML",
     )
+    await call.answer()
 
 
+# Шаг 5 — место
 @main_router.callback_query(F.data == "seat_busy")
 async def seat_busy(call: CallbackQuery):
-    await call.answer("Это место занято на выбранное время.", show_alert=True)
+    await call.answer("Это место уже занято!", show_alert=True)
 
 
 @main_router.callback_query(BookingSG.seat, F.data.startswith("seat:"))
@@ -261,50 +231,59 @@ async def book_seat(call: CallbackQuery, state: FSMContext):
     seat = int(call.data.split(":")[1])
     await state.update_data(seat=seat)
     await state.set_state(BookingSG.comment)
-    await call.message.edit_text("Добавьте комментарий к брони (или напишите «нет»):")
+    await call.message.edit_text(
+        f"Место <b>#{seat}</b> выбрано!\n\nДобавьте комментарий или пропустите:",
+        reply_markup=skip_comment_kb(), parse_mode="HTML",
+    )
+    await call.answer()
+
+
+# Шаг 6 — комментарий
+@main_router.callback_query(BookingSG.comment, F.data == "skip_comment")
+async def skip_comment(call: CallbackQuery, state: FSMContext):
+    await state.update_data(comment="")
+    await show_confirm(call.message, state, edit=True)
     await call.answer()
 
 
 @main_router.message(BookingSG.comment)
 async def book_comment(message: Message, state: FSMContext):
-    comment = "" if message.text.lower() in ("нет", "-", "") else message.text
-    await state.update_data(comment=comment)
-    data = await state.get_data()
+    await state.update_data(comment=message.text)
+    await show_confirm(message, state, edit=False)
 
-    summary = (
-        f"📋 <b>Проверьте данные брони:</b>\n\n"
+
+async def show_confirm(msg, state: FSMContext, edit: bool):
+    data = await state.get_data()
+    d = datetime.strptime(data["date"], "%Y-%m-%d")
+    text = (
+        f"📋 <b>Проверьте бронь:</b>\n\n"
         f"Зона: {zone_label(data['zone'])}\n"
         f"Место: #{data['seat']}\n"
-        f"Дата: {data['date']}\n"
+        f"Дата: {d.strftime('%d.%m.%Y')}\n"
         f"Время: {data['time_from']} – {data['time_to']}\n"
-        + (f"Комментарий: {comment}\n" if comment else "")
-        + "\nПодтвердить? Напишите <b>да</b> или <b>нет</b>."
+        + (f"Комментарий: {data['comment']}\n" if data.get("comment") else "")
+        + "\nПодтвердить бронирование?"
     )
     await state.set_state(BookingSG.confirm)
-    await message.answer(summary, parse_mode="HTML")
+    if edit:
+        await msg.edit_text(text, reply_markup=confirm_booking_kb(), parse_mode="HTML")
+    else:
+        await msg.answer(text, reply_markup=confirm_booking_kb(), parse_mode="HTML")
 
 
-@main_router.message(BookingSG.confirm)
-async def book_confirm(message: Message, state: FSMContext, bot: Bot):
-    if message.text.lower() not in ("да", "yes", "✅", "+"):
-        await state.clear()
-        await message.answer("Бронирование отменено.", reply_markup=main_menu(is_admin(message.from_user.id)))
-        return
-
+# Шаг 7 — подтверждение
+@main_router.callback_query(BookingSG.confirm, F.data == "do_confirm")
+async def do_confirm(call: CallbackQuery, state: FSMContext, bot: Bot):
     data = await state.get_data()
 
-    # Проверяем, что место всё ещё свободно
     booked = db.get_booked_seats(data["zone"], data["date"], data["time_from"], data["time_to"])
     if data["seat"] in booked:
         await state.clear()
-        await message.answer(
-            "❌ К сожалению, это место уже заняли. Попробуйте выбрать другое.",
-            reply_markup=main_menu(is_admin(message.from_user.id)),
-        )
+        await call.message.edit_text("❌ Место только что заняли. Попробуйте другое.")
         return
 
     bid = db.create_booking(
-        user_id=message.from_user.id,
+        user_id=call.from_user.id,
         zone=data["zone"],
         seat=data["seat"],
         date=data["date"],
@@ -314,20 +293,23 @@ async def book_confirm(message: Message, state: FSMContext, bot: Bot):
     )
     await state.clear()
 
-    u = db.get_user(message.from_user.id)
-    await message.answer(
-        f"✅ Бронь #{bid} принята! Ждём подтверждения администратора.",
-        reply_markup=main_menu(is_admin(message.from_user.id)),
+    d = datetime.strptime(data["date"], "%Y-%m-%d")
+    await call.message.edit_text(
+        f"✅ Бронь <b>#{bid}</b> принята!\n"
+        f"📅 {d.strftime('%d.%m.%Y')}  🕐 {data['time_from']}–{data['time_to']}\n\n"
+        "Ожидайте подтверждения администратора.",
+        parse_mode="HTML",
     )
+    await call.answer("Бронь создана!")
 
-    # Уведомление администратору
+    u = db.get_user(call.from_user.id)
     text = (
         f"🔔 <b>Новая бронь #{bid}</b>\n\n"
-        f"👤 {message.from_user.full_name} (@{message.from_user.username or '—'})\n"
+        f"👤 {call.from_user.full_name} (@{call.from_user.username or '—'})\n"
         f"📞 {u['phone'] if u else '—'}\n\n"
         f"Зона: {zone_label(data['zone'])}, место {data['seat']}\n"
-        f"📅 {data['date']}  🕐 {data['time_from']}–{data['time_to']}\n"
-        + (f"💬 {data['comment']}" if data.get("comment") else "")
+        f"📅 {d.strftime('%d.%m.%Y')}  🕐 {data['time_from']}–{data['time_to']}"
+        + (f"\n💬 {data['comment']}" if data.get("comment") else "")
     )
     try:
         await bot.send_message(ADMIN_ID, text, parse_mode="HTML", reply_markup=confirm_kb(bid))
@@ -335,35 +317,36 @@ async def book_confirm(message: Message, state: FSMContext, bot: Bot):
         pass
 
 
-# ─────────────────────────────────────────────────────
-#  АДМИН-ПАНЕЛЬ
-# ─────────────────────────────────────────────────────
+@main_router.callback_query(F.data == "cancel_booking")
+async def cancel_flow(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await call.message.edit_text("Бронирование отменено.")
+    await call.answer()
+
+
+# ── АДМИН ─────────────────────────────────────────────
 
 @main_router.message(F.text == "🔧 Админ-панель")
 async def admin_panel(message: Message):
     if not is_admin(message.from_user.id):
         return
-
     users = db.all_users_count()
     bookings = db.all_bookings_count()
     today = db.all_bookings_today()
-
     text = (
         f"🔧 <b>Админ-панель</b>\n\n"
         f"👥 Пользователей: {users}\n"
         f"📅 Всего броней: {bookings}\n"
         f"📋 Броней сегодня: {len(today)}\n\n"
     )
-
     if today:
-        text += "<b>Сегодняшние брони:</b>\n"
+        text += "<b>Сегодня:</b>\n"
         for b in today:
             text += (
                 f"• #{b['id']} {b['time_from']}–{b['time_to']} | "
                 f"{zone_label(b['zone'])} #{b['seat']} | "
                 f"{b['full_name']} | {b['status']}\n"
             )
-
     await message.answer(text, parse_mode="HTML")
 
 
@@ -395,11 +378,6 @@ async def adm_confirm(call: CallbackQuery, bot: Bot):
     bid = int(call.data.split(":")[1])
     db.confirm_booking(bid)
     await call.message.edit_text(f"✅ Бронь #{bid} подтверждена.")
-
-    # Уведомить пользователя
-    rows = db.get_user_bookings.__wrapped__ if hasattr(db.get_user_bookings, "__wrapped__") else None
-    # получаем бронь из БД напрямую
-    import sqlite3
     with sqlite3.connect("club.db") as conn:
         conn.row_factory = sqlite3.Row
         b = conn.execute("SELECT * FROM bookings WHERE id = ?", (bid,)).fetchone()
@@ -422,18 +400,16 @@ async def adm_reject(call: CallbackQuery, bot: Bot):
         await call.answer("Нет доступа.", show_alert=True)
         return
     bid = int(call.data.split(":")[1])
-    import sqlite3
     with sqlite3.connect("club.db") as conn:
         conn.row_factory = sqlite3.Row
         b = conn.execute("SELECT * FROM bookings WHERE id = ?", (bid,)).fetchone()
         conn.execute("UPDATE bookings SET status = 'cancelled' WHERE id = ?", (bid,))
-
     await call.message.edit_text(f"❌ Бронь #{bid} отклонена.")
     if b:
         try:
             await bot.send_message(
                 b["user_id"],
-                f"❌ К сожалению, ваша бронь #{bid} была отклонена.\n"
+                f"❌ Ваша бронь #{bid} была отклонена.\n"
                 "Свяжитесь с клубом для уточнения деталей.",
             )
         except Exception:
