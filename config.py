@@ -7,7 +7,8 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "7885240347"))
 
 CLUB_NAME = "iGames"
 CLUB_ADDRESS = "ул. Карла Маркса, 144, Магнитогорск"
-CLUB_HOURS = "Пн–Чт: 10:00–00:00\nПт–Вс: 10:00–02:00"
+CLUB_HOURS = "Круглосуточно, 24/7"
+
 CLUB_PHONE = "+7 922 638 8051"
 
 # Количество мест по зонам
