@@ -9,7 +9,6 @@ class BookingSG(StatesGroup):
     zone      = State()
     date      = State()
     time_from = State()
-    time_to   = State()
     seat      = State()
     comment   = State()
     confirm   = State()
