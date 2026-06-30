@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+[30.06.2026 21:51] Егор Непомню: from datetime import datetime, timedelta
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton,
     InlineKeyboardMarkup, InlineKeyboardButton,
@@ -111,5 +111,5 @@ def cancel_booking_kb(booking_id: int) -> InlineKeyboardMarkup:
 def confirm_kb(booking_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"adm_confirm:{booking_id}"),
-        InlineKeyboardButton(text="❌ Отклонить",  callback_data=f"adm_reject:{booking_id}"),
+[30.06.2026 21:51] Егор Непомню: InlineKeyboardButton(text="❌ Отклонить",  callback_data=f"adm_reject:{booking_id}"),
     ]])
