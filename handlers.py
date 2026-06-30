@@ -35,7 +35,7 @@ def fmt_booking(b) -> str:
     status = status_map.get(b["status"], b["status"])
     return (
         f"🆔 #{b['id']} | {zone_label(b['zone'])}, место {b['seat']}\n"
-        f"📅 {b['date']}  🕐 {b['time_from']}–{b['time_to']}\n"
+        f"📅 {b['date']}  🕐 {b['time_from']} (держится 15 мин)\n"
         f"Статус: {status}"
         + (f"\n💬 {b['comment']}" if b["comment"] else "")
     )
@@ -179,42 +179,23 @@ async def book_date(call: CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-# Шаг 3 — время начала
+# Шаг 3 — время начала → сразу к выбору места (бронь на 15 минут)
 @main_router.callback_query(BookingSG.time_from, F.data.startswith("tfrom:"))
 async def book_time_from(call: CallbackQuery, state: FSMContext):
     time_from = call.data.split(":")[1]
     data = await state.get_data()
-    await state.update_data(time_from=time_from)
-    await state.set_state(BookingSG.time_to)
-    await call.message.edit_text(
-        f"Начало: <b>{time_from}</b>\n\nВыберите время окончания:",
-        reply_markup=times_keyboard("tto", data.get("date", "")), parse_mode="HTML",
-    )
-    await call.answer()
 
+    # Бронь фиксированная — 15 минут от времени начала
+    h, m = map(int, time_from.split(":"))
+    total = h * 60 + m + 15
+    time_to = f"{(total // 60) % 24:02d}:{total % 60:02d}"
 
-# Шаг 4 — время окончания
-@main_router.callback_query(BookingSG.time_to, F.data.startswith("tto:"))
-async def book_time_to(call: CallbackQuery, state: FSMContext):
-    time_to = call.data.split(":")[1]
-    data = await state.get_data()
-    time_from = data["time_from"]
-
-    # Проверка что время окончания позже начала (с учётом перехода через полночь)
-    def to_min(t):
-        h, m = map(int, t.split(":"))
-        return h * 60 + m + (1440 if h < 8 else 0)
-
-    if to_min(time_to) <= to_min(time_from):
-        await call.answer("Время окончания должно быть позже начала!", show_alert=True)
-        return
-
-    await state.update_data(time_to=time_to)
+    await state.update_data(time_from=time_from, time_to=time_to)
     await state.set_state(BookingSG.seat)
 
     booked = db.get_booked_seats(data["zone"], data["date"], time_from, time_to)
     await call.message.edit_text(
-        f"🕐 <b>{time_from} – {time_to}</b>\n\n🟢 свободно  🔴 занято\n\nВыберите место:",
+        f"🕐 <b>{time_from}</b> (бронь держится 15 минут)\n\n🟢 свободно  🔴 занято\n\nВыберите место:",
         reply_markup=seats_keyboard(data["zone"], booked), parse_mode="HTML",
     )
     await call.answer()
@@ -260,7 +241,7 @@ async def show_confirm(msg, state: FSMContext, edit: bool):
         f"Зона: {zone_label(data['zone'])}\n"
         f"Место: #{data['seat']}\n"
         f"Дата: {d.strftime('%d.%m.%Y')}\n"
-        f"Время: {data['time_from']} – {data['time_to']}\n"
+        f"Время: {data['time_from']} (бронь держится 15 минут)\n"
         + (f"Комментарий: {data['comment']}\n" if data.get("comment") else "")
         + "\nПодтвердить бронирование?"
     )
@@ -296,7 +277,7 @@ async def do_confirm(call: CallbackQuery, state: FSMContext, bot: Bot):
     d = datetime.strptime(data["date"], "%Y-%m-%d")
     await call.message.edit_text(
         f"✅ Бронь <b>#{bid}</b> принята!\n"
-        f"📅 {d.strftime('%d.%m.%Y')}  🕐 {data['time_from']}–{data['time_to']}\n\n"
+        f"📅 {d.strftime('%d.%m.%Y')}  🕐 {data['time_from']} (держится 15 мин)\n\n"
         "Ожидайте подтверждения администратора.",
         parse_mode="HTML",
     )
@@ -308,7 +289,7 @@ async def do_confirm(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"👤 {call.from_user.full_name} (@{call.from_user.username or '—'})\n"
         f"📞 {u['phone'] if u else '—'}\n\n"
         f"Зона: {zone_label(data['zone'])}, место {data['seat']}\n"
-        f"📅 {d.strftime('%d.%m.%Y')}  🕐 {data['time_from']}–{data['time_to']}"
+        f"📅 {d.strftime('%d.%m.%Y')}  🕐 {data['time_from']} (держится 15 мин)"
         + (f"\n💬 {data['comment']}" if data.get("comment") else "")
     )
     try:
@@ -343,7 +324,7 @@ async def admin_panel(message: Message):
         text += "<b>Сегодня:</b>\n"
         for b in today:
             text += (
-                f"• #{b['id']} {b['time_from']}–{b['time_to']} | "
+                f"• #{b['id']} {b['time_from']} | "
                 f"{zone_label(b['zone'])} #{b['seat']} | "
                 f"{b['full_name']} | {b['status']}\n"
             )
@@ -364,7 +345,7 @@ async def admin_pending(message: Message):
             f"👤 {b['full_name']} (@{b['username'] or '—'})\n"
             f"📞 {b['phone'] or '—'}\n"
             f"Зона: {zone_label(b['zone'])}, место {b['seat']}\n"
-            f"📅 {b['date']}  🕐 {b['time_from']}–{b['time_to']}"
+            f"📅 {b['date']}  🕐 {b['time_from']} (держится 15 мин)"
             + (f"\n💬 {b['comment']}" if b["comment"] else "")
         )
         await message.answer(text, parse_mode="HTML", reply_markup=confirm_kb(b["id"]))
@@ -386,7 +367,7 @@ async def adm_confirm(call: CallbackQuery, bot: Bot):
             await bot.send_message(
                 b["user_id"],
                 f"✅ Ваша бронь #{bid} подтверждена!\n"
-                f"📅 {b['date']}  🕐 {b['time_from']}–{b['time_to']}\n"
+                f"📅 {b['date']}  🕐 {b['time_from']} (держится 15 мин)\n"
                 f"Ждём вас в клубе! 🎮",
             )
         except Exception:
