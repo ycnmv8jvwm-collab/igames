@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from datetime import datetime
 
@@ -13,7 +14,7 @@ from config import (
 )
 from keyboards import (
     main_menu, phone_keyboard, zones_keyboard, dates_keyboard,
-    times_keyboard, seats_keyboard, skip_comment_kb,
+    seats_keyboard, skip_comment_kb,
     confirm_booking_kb, cancel_booking_kb, confirm_kb,
 )
 from states import RegisterSG, BookingSG
@@ -173,16 +174,27 @@ async def book_date(call: CallbackQuery, state: FSMContext):
     await state.set_state(BookingSG.time_from)
     d = datetime.strptime(date_str, "%Y-%m-%d")
     await call.message.edit_text(
-        f"Дата: <b>{d.strftime('%d.%m.%Y')}</b>\n\nВыберите время начала:",
-        reply_markup=times_keyboard("tfrom", date_str), parse_mode="HTML",
+        f"Дата: <b>{d.strftime('%d.%m.%Y')}</b>\n\n"
+        f"Введите время начала в формате <b>ЧЧ:ММ</b> (например, 14:30):\n\n"
+        f"⚠️ Бронь держится <b>15 минут</b> с указанного времени, "
+        f"после чего автоматически снимается.",
+        parse_mode="HTML",
     )
     await call.answer()
 
 
-# Шаг 3 — время начала → сразу к выбору места (бронь на 15 минут)
-@main_router.callback_query(BookingSG.time_from, F.data.startswith("tfrom:"))
-async def book_time_from(call: CallbackQuery, state: FSMContext):
-    time_from = call.data.split(":")[1]
+# Шаг 3 — время начала (текстовый ввод) → сразу к выбору места (бронь на 15 минут)
+@main_router.message(BookingSG.time_from)
+async def book_time_from(message: Message, state: FSMContext):
+    t = message.text.strip()
+    if not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", t):
+        await message.answer(
+            "❌ Неверный формат. Введите время как <b>ЧЧ:ММ</b>, например 14:30.",
+            parse_mode="HTML",
+        )
+        return
+
+    time_from = t
     data = await state.get_data()
 
     # Бронь фиксированная — 15 минут от времени начала
@@ -194,11 +206,11 @@ async def book_time_from(call: CallbackQuery, state: FSMContext):
     await state.set_state(BookingSG.seat)
 
     booked = db.get_booked_seats(data["zone"], data["date"], time_from, time_to)
-    await call.message.edit_text(
-        f"🕐 <b>{time_from}</b> (бронь держится 15 минут)\n\n🟢 свободно  🔴 занято\n\nВыберите место:",
+    await message.answer(
+        f"🕐 <b>{time_from}</b>\n⚠️ Бронь держится <b>15 минут</b>, затем снимается автоматически.\n\n"
+        f"🟢 свободно  🔴 занято\n\nВыберите место:",
         reply_markup=seats_keyboard(data["zone"], booked), parse_mode="HTML",
     )
-    await call.answer()
 
 
 # Шаг 5 — место
