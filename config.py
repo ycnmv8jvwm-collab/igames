@@ -10,7 +10,8 @@ CLUB_ADDRESS = "ул. Карла Маркса, 144, Магнитогорск"
 CLUB_HOURS = "Круглосуточно, 24/7"
 CLUB_PHONE = "+7 922 638 8051"
 
-# Количество мест по зонам
+# URL мини-приложения
+WEBAPP_URL = "https://ycnmv8jvwm-collab.github.io/igames-webapp"
 ZONE_SEATS = {
     "pc":  11,   # Общий зал
     "vip":  5,   # VIP
