@@ -15,9 +15,9 @@ from config import (
 from keyboards import (
     main_menu, phone_keyboard, zones_keyboard, dates_keyboard,
     seats_keyboard, skip_comment_kb,
-    confirm_booking_kb, cancel_booking_kb, confirm_kb,
+    confirm_booking_kb, cancel_booking_kb, confirm_kb, cancel_admin_msg_kb,
 )
-from states import RegisterSG, BookingSG
+from states import RegisterSG, BookingSG, AdminMessageSG
 
 main_router = Router()
 db.init_db()
@@ -139,6 +139,148 @@ async def user_cancel(call: CallbackQuery):
     db.cancel_booking(booking_id, call.from_user.id)
     await call.message.edit_text("❌ Бронь отменена.")
     await call.answer("Бронь отменена.")
+
+
+
+# ── Данные из мини-приложения ────────────────────────
+
+@main_router.message(F.web_app_data)
+async def web_app_data_handler(message: Message, bot: Bot):
+    import json
+    try:
+        data = json.loads(message.web_app_data.data)
+    except Exception:
+        return
+
+    user = message.from_user
+    db.upsert_user(user.id, user.username or "", user.full_name)
+    u = db.get_user(user.id)
+
+    if data.get("type") == "booking":
+        zone  = data.get("zone", "")
+        seat  = data.get("seat", "?")
+        date  = data.get("dateStr", "?")
+        time  = data.get("time", "?")
+        comment = data.get("comment", "")
+
+        # Вычислить time_to (+15 минут)
+        try:
+            h, m = map(int, time.split(":"))
+            total = h * 60 + m + 15
+            time_to = f"{(total // 60) % 24:02d}:{total % 60:02d}"
+        except Exception:
+            time_to = time
+
+        bid = db.create_booking(
+            user_id=user.id,
+            zone=zone,
+            seat=int(seat),
+            date=date,
+            time_from=time,
+            time_to=time_to,
+            comment=comment,
+        )
+
+        await message.answer(
+            f"✅ Бронь <b>#{bid}</b> принята!\n"
+            f"📅 {date}  🕐 {time} (держится 15 мин)\n\n"
+            "Ожидайте подтверждения администратора.",
+            parse_mode="HTML",
+        )
+
+        # Уведомление администратору
+        text = (
+            f"🔔 <b>Новая бронь #{bid}</b> (мини-приложение)\n\n"
+            f"👤 {user.full_name} (@{user.username or '—'})\n"
+            f"📞 {u['phone'] if u and u['phone'] else '—'}\n\n"
+            f"Зона: {zone_label(zone)}, место {seat}\n"
+            f"📅 {date}  🕐 {time} (держится 15 мин)"
+            + (f"\n💬 {comment}" if comment else "")
+        )
+        try:
+            await bot.send_message(ADMIN_ID, text, parse_mode="HTML", reply_markup=confirm_kb(bid))
+        except Exception:
+            pass
+
+    elif data.get("type") == "contact":
+        msg = data.get("message", "")
+        text = (
+            f"📩 <b>Сообщение через мини-приложение</b>\n\n"
+            f"👤 {user.full_name} (@{user.username or '—'})\n"
+            f"🆔 ID: <code>{user.id}</code>\n\n"
+            f"💬 {msg}"
+        )
+        try:
+            await bot.send_message(ADMIN_ID, text, parse_mode="HTML")
+            await message.answer("✅ Сообщение отправлено администратору!")
+        except Exception:
+            await message.answer("❌ Ошибка отправки.")
+
+
+
+@main_router.message(F.text == "📞 Написать админу")
+async def contact_admin_start(message: Message, state: FSMContext):
+    u = db.get_user(message.from_user.id)
+    if not u or not u["phone"]:
+        await message.answer("Сначала зарегистрируйтесь: /start")
+        return
+    await state.set_state(AdminMessageSG.text)
+    await message.answer(
+        "✍️ Напишите ваше сообщение администратору — оно будет отправлено напрямую.",
+        reply_markup=cancel_admin_msg_kb(),
+    )
+
+
+@main_router.callback_query(F.data == "cancel_admin_msg")
+async def cancel_admin_msg(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await call.message.edit_text("Отменено.")
+    await call.answer()
+
+
+@main_router.message(AdminMessageSG.text)
+async def contact_admin_send(message: Message, state: FSMContext, bot: Bot):
+    await state.clear()
+    user = message.from_user
+    u = db.get_user(user.id)
+
+    text = (
+        f"📩 <b>Сообщение от клиента</b>\n\n"
+        f"👤 {user.full_name} (@{user.username or '—'})\n"
+        f"📞 {u['phone'] if u and u['phone'] else '—'}\n"
+        f"🆔 ID: <code>{user.id}</code>\n\n"
+        f"💬 {message.text}"
+    )
+    try:
+        await bot.send_message(ADMIN_ID, text, parse_mode="HTML")
+        await message.answer(
+            "✅ Сообщение отправлено администратору! Ожидайте ответа.",
+            reply_markup=main_menu(is_admin(user.id)),
+        )
+    except Exception:
+        await message.answer(
+            "❌ Не удалось отправить сообщение. Попробуйте позже.",
+            reply_markup=main_menu(is_admin(user.id)),
+        )
+
+
+# Админ отвечает клиенту — Reply на сообщение с "🆔 ID: 123456"
+@main_router.message(F.reply_to_message, F.from_user.id == ADMIN_ID)
+async def admin_reply_to_client(message: Message, bot: Bot):
+    original = message.reply_to_message.text or message.reply_to_message.caption or ""
+    match = re.search(r"ID:\s*(\d+)", original)
+    if not match:
+        return
+    client_id = int(match.group(1))
+    try:
+        await bot.send_message(
+            client_id,
+            f"💬 <b>Ответ администратора:</b>\n\n{message.text}",
+            parse_mode="HTML",
+        )
+        await message.answer("✅ Ответ отправлен клиенту.")
+    except Exception:
+        await message.answer("❌ Не удалось отправить ответ клиенту.")
 
 
 # ── БРОНИРОВАНИЕ ─────────────────────────────────────
