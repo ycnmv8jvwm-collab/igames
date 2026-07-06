@@ -2,13 +2,20 @@ from datetime import datetime, timedelta
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton,
     InlineKeyboardMarkup, InlineKeyboardButton,
+    WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
-from config import ZONES, ZONE_SEATS
+from config import ZONES, ZONE_SEATS, WEBAPP_URL
 
 
 def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
+    builder.row(
+        KeyboardButton(
+            text="🎮 Открыть приложение",
+            web_app=WebAppInfo(url=WEBAPP_URL)
+        ),
+    )
     builder.row(
         KeyboardButton(text="📅 Забронировать"),
         KeyboardButton(text="🗂 Мои брони"),
@@ -17,7 +24,10 @@ def main_menu(is_admin: bool = False) -> ReplyKeyboardMarkup:
         KeyboardButton(text="💰 Прайс"),
         KeyboardButton(text="ℹ️ О клубе"),
     )
-    builder.row(KeyboardButton(text="👤 Профиль"))
+    builder.row(
+        KeyboardButton(text="👤 Профиль"),
+        KeyboardButton(text="📞 Написать админу"),
+    )
     if is_admin:
         builder.row(KeyboardButton(text="🔧 Админ-панель"))
     return builder.as_markup(resize_keyboard=True)
@@ -112,4 +122,10 @@ def confirm_kb(booking_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"adm_confirm:{booking_id}"),
         InlineKeyboardButton(text="❌ Отклонить",  callback_data=f"adm_reject:{booking_id}"),
+    ]])
+
+
+def cancel_admin_msg_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_admin_msg")
     ]])
