@@ -5,6 +5,10 @@ class RegisterSG(StatesGroup):
     phone = State()
 
 
+class AdminMessageSG(StatesGroup):
+    text = State()
+
+
 class BookingSG(StatesGroup):
     zone      = State()
     date      = State()
